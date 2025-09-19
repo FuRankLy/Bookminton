@@ -42,10 +42,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       showNotification(msg.title || 'Bookminton', msg.message || '');
       sendResponse({ ok: true });
       break;
-    case 'override:next-day':
-      // Placeholder: your logic to temporarily override next-day restriction
-      sendResponse({ ok: true, message: 'Override toggled' });
-      break;
+    case 'override:next-day': {
+      // Forward to the active tab (content script) to manipulate the page DOM
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs && tabs[0];
+        const url = tab?.url || '';
+        const allowed = url.startsWith('https://platform.aklbadminton.com/booking');
+        if (!allowed) {
+          sendResponse({ ok: false, error: 'Open the booking page first' });
+          return;
+        }
+        if (tab?.id) {
+          chrome.tabs.sendMessage(tab.id, { type: 'override:next-day' }, async (resp) => {
+            if (chrome.runtime.lastError || !resp) {
+              try {
+                const [result] = await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  func: () => {
+                    const el = document.querySelector('#calendar-next');
+                    if (!el) return { ok: false, error: '#calendar-next not found' };
+                    el.classList.remove('disabled');
+                    el.removeAttribute('disabled');
+                    el.setAttribute('aria-disabled', 'false');
+                    el.style.pointerEvents = 'auto';
+                    el.style.opacity = '';
+                    return { ok: true };
+                  },
+                });
+                sendResponse(result?.result || { ok: false, error: 'No result' });
+              } catch (e) {
+                sendResponse({ ok: false, error: String(e) });
+              }
+            } else {
+              sendResponse(resp);
+            }
+          });
+        } else {
+          sendResponse({ ok: false, error: 'No active tab' });
+        }
+      });
+      return true; // async response
+    }
     default:
       // no-op
       break;

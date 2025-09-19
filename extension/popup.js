@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const defaultSettings = {
   email: "",
   password: "",
-  bookingDate: "", // YYYY-MM-DD
+  bookingDate: "", 
   timeStart: "19:00",
   duration: 60,
   courtNumber: "1",
@@ -36,35 +36,36 @@ async function saveSettings() {
   return data;
 }
 
-$("save").addEventListener("click", async () => {
-  const data = await saveSettings();
-  await chrome.runtime.sendMessage({ type: "settings:update", payload: data });
-  window.close();
-});
+const saveBtn = $("save");
+if (saveBtn) {
+  saveBtn.addEventListener("click", async () => {
+    const data = await saveSettings();
+    await chrome.runtime.sendMessage({ type: "settings:update", payload: data });
+    window.close();
+  });
+}
 
-$("test").addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) {
-    chrome.tabs.sendMessage(tab.id, { type: "ping" }, (resp) => {
-      console.log("Ping response:", resp);
-    });
-  }
-});
+// Removed 'test' button handler (button not present in popup.html)
 
-$("overrideNextDay").addEventListener("click", async () => {
-  try {
-    const res = await chrome.runtime.sendMessage({ type: "override:next-day" });
-    console.log("Override response:", res);
-  } catch (e) {
-    console.warn("Override failed", e);
-  }
-});
+const overrideBtn = $("overrideNextDay");
+if (overrideBtn) {
+  overrideBtn.addEventListener("click", async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "override:next-day" });
+      console.log("Override response:", res);
+    } catch (e) {
+      console.warn("Override failed", e);
+    }
+  });
+}
 
-// Initialize
 // Initialize with today's date as default if unset
 const today = new Date();
 const yyyy = today.getFullYear();
 const mm = String(today.getMonth() + 1).padStart(2, '0');
 const dd = String(today.getDate()).padStart(2, '0');
-$("bookingDate").value = `${yyyy}-${mm}-${dd}`;
+const dateEl = $("bookingDate");
+if (dateEl && !dateEl.value) {
+  dateEl.value = `${yyyy}-${mm}-${dd}`;
+}
 loadSettings();
