@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Bookminton Helper",
+  "description": "Auto-assists AKL Badminton Platform booking: settings popup, background alarms, messaging, and page inject.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Bookminton",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+  "notifications",
+  "activeTab",
+  "tabs"
+  ],
+  "host_permissions": [
+    "https://platform.aklbadminton.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://platform.aklbadminton.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page-inject.js"
+      ],
+      "matches": [
+        "https://platform.aklbadminton.com/*"
+      ]
+    }
+  ],
+  "options_ui": {
+    "page": "popup.html",
+    "open_in_tab": false
+  }
+}

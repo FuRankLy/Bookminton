@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bookminton</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 12px; width: 320px; }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      fieldset { border: 1px solid #8883; border-radius: 8px; padding: 8px 10px; margin: 10px 0; }
+      label { display: block; margin: 6px 0 2px; font-size: 12px; }
+      input, select { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+      button { padding: 6px 10px; border-radius: 6px; border: 1px solid #9995; cursor: pointer; }
+      .note { font-size: 11px; color: #666; }
+    </style>
+  </head>
+  <body>
+    <h1>Bookminton</h1>
+    <fieldset>
+      <legend>Login</legend>
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="name@example.com" />
+      <label for="password">Password</label>
+      <input id="password" type="password" />
+    </fieldset>
+
+    <fieldset>
+      <legend>Booking</legend>
+      <div class="row">
+        <div>
+          <label for="bookingDate">Date</label>
+          <input id="bookingDate" type="date" />
+        </div>
+        <div>
+          <label for="timeStart">Start</label>
+          <input id="timeStart" type="time" value="19:00" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="duration">Duration (mins)</label>
+          <input id="duration" type="number" min="30" step="30" value="60" />
+        </div>
+        <div>
+          <label for="courtNumber">Court number</label>
+          <select id="courtNumber">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+            <option value="11">11</option>
+            <option value="12">12</option>
+          </select>
+        </div>
+      </div>
+      <label for="autoBook">
+        <input id="autoBook" type="checkbox" /> Enable auto-book on release
+      </label>
+  <div class="note">Times and availability depend on the AKL Badminton Platform. This tool can be disabled anytime.</div>
+    </fieldset>
+
+    <div class="buttons">
+      <button id="overrideNextDay" title="Temporarily override next-day restriction">Override next day</button>
+      <button id="save">Book</button>
+    </div>
+
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>
