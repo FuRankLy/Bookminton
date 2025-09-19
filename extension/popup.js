@@ -40,8 +40,31 @@ const saveBtn = $("save");
 if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
     const data = await saveSettings();
-    await chrome.runtime.sendMessage({ type: "settings:update", payload: data });
-    window.close();
+    const result = await chrome.runtime.sendMessage({ type: "booking:submit" });
+    console.log('Booking result:', result);
+    const box = $("status");
+    if (box) {
+      box.hidden = false;
+      box.classList.remove('success','error');
+      if (result?.ok) {
+        box.classList.add('success');
+        const details = [
+          result.message,
+          result.startIso ? `Start: ${result.startIso}` : '',
+          result.endIso ? `End: ${result.endIso}` : '',
+          result.facilityId ? `Court: ${result.facilityId}` : '',
+        ].filter(Boolean).join('\n');
+        box.textContent = details;
+      } else {
+        box.classList.add('error');
+        const lines = [
+          result?.message || 'Booking failed',
+          result?.error ? `Error: ${result.error}` : '',
+          typeof result?.code !== 'undefined' ? `Status: ${result.code}` : '',
+        ].filter(Boolean);
+        box.textContent = lines.join('\n');
+      }
+    }
   });
 }
 
