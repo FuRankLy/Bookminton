@@ -40,8 +40,9 @@ const saveBtn = $("save");
 if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
     const data = await saveSettings();
-    await chrome.runtime.sendMessage({ type: "settings:update", payload: data });
-    window.close();
+    const result = await chrome.runtime.sendMessage({ type: "booking:submit" });
+    console.log('Booking result:', result);
+    // Optionally close popup or show toast; for now, keep it open
   });
 }
 

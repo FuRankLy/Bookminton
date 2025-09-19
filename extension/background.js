@@ -17,6 +17,105 @@ async function loadSettings() {
   currentSettings = data;
 }
 
+function toLocalIsoNoTZ(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+}
+
+async function submitBooking() {
+  await loadSettings();
+  const s = currentSettings || {};
+  const { email, password, bookingDate, timeStart, duration, courtNumber } = s;
+  if (!email || !password || !bookingDate || !timeStart || !duration || !courtNumber) {
+    return { ok: false, error: 'Missing required settings' };
+  }
+
+  // Build start/end ISO strings in local time without timezone
+  const [yyyy, mm, dd] = bookingDate.split('-').map((x) => parseInt(x, 10));
+  const [hh, min] = timeStart.split(':').map((x) => parseInt(x, 10));
+  const start = new Date(yyyy, (mm - 1), dd, hh, min, 0, 0);
+  const end = new Date(start.getTime() + Number(duration) * 60_000);
+  const startIso = toLocalIsoNoTZ(start);
+  const endIso = toLocalIsoNoTZ(end);
+
+  // Login
+  const loginBody = new URLSearchParams();
+  loginBody.set('email', email);
+  loginBody.set('password', password);
+  const loginRes = await fetch('https://platform.aklbadminton.com/account/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: loginBody.toString(),
+    credentials: 'include',
+    redirect: 'follow',
+  });
+  if (!(loginRes.status === 200 || loginRes.status === 302)) {
+    const body = await loginRes.text().catch(() => '');
+    return { ok: false, error: `Login failed: ${loginRes.status}`, body };
+  }
+
+  // Book
+  const facilityId = String(courtNumber); // Assumption: facility id matches court number 1–12
+  const form = new URLSearchParams();
+  form.set('payment_method', 'Account');
+  form.set('start', startIso);
+  form.set('end', endIso);
+  form.set('facility', facilityId);
+  form.set('entity_type', 'Casual');
+  form.set('entity', '');
+  form.set('requiresTerms', 'true');
+  const agreedToTerms = 'true';
+  form.set('agreedToTerms', agreedToTerms);
+  form.set('chargeConfirmed', 'false');
+
+  const bookRes = await fetch('https://platform.aklbadminton.com/api/booking', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': 'https://platform.aklbadminton.com',
+      'Referer': 'https://platform.aklbadminton.com/booking',
+    },
+    body: form.toString(),
+    credentials: 'include',
+    redirect: 'follow',
+  });
+  const respText = await bookRes.text().catch(() => '');
+  const code = bookRes.status;
+
+  let message = `Booking HTTP status: ${code}`;
+  let terminal = false; // whether user should stop retrying
+  if (respText.includes('Sorry, this time is unavailable.')) {
+    message = 'Booking failed: Time slot already taken.';
+    terminal = true;
+  } else if (respText.includes('Members cannot book courts more than 14 days in advance.')) {
+    message = 'Booking failed: Too early to book.';
+  } else if (respText.includes('Invalid payment method - please select another.')) {
+    message = 'Booking failed: Low Balance';
+    terminal = true;
+  } else if (respText.includes('Bookings cannot exceed two hours in any 6 hour window.')) {
+    message = 'Booking failed: Exceeds 2 hours in 6 hour window.';
+    terminal = true;
+  } else if (respText.includes('"redirect"')) {
+    message = 'Booking succeeded!';
+    terminal = true;
+  } else if (code === 401) {
+    message = 'Wrong Login, please check your username and password.';
+    terminal = true;
+  } else {
+    message = `Booking response not recognized. Status ${code}`;
+  }
+
+  showNotification('Bookminton', message);
+  return { ok: message.startsWith('Booking succeeded'), code, message, startIso, endIso, facilityId, terminal, body: respText };
+}
+
 function scheduleAlarm(name = 'bookminton:tick', whenMs = Date.now() + 60_000) {
   chrome.alarms.create(name, { when: whenMs });
 }
@@ -42,6 +141,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       showNotification(msg.title || 'Bookminton', msg.message || '');
       sendResponse({ ok: true });
       break;
+    case 'booking:submit': {
+      submitBooking()
+        .then((res) => sendResponse(res))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true; // async response
+    }
     case 'override:next-day': {
       // Forward to the active tab (content script) to manipulate the page DOM
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
