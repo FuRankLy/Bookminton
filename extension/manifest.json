@@ -22,7 +22,8 @@
     "alarms",
   "notifications",
   "activeTab",
-  "tabs"
+  "tabs",
+  "scripting"
   ],
   "host_permissions": [
     "https://platform.aklbadminton.com/*"
@@ -34,7 +35,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://platform.aklbadminton.com/*"
+        "https://platform.aklbadminton.com/booking*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"
@@ -46,7 +47,7 @@
         "page-inject.js"
       ],
       "matches": [
-        "https://platform.aklbadminton.com/*"
+  "https://platform.aklbadminton.com/*"
       ]
     }
   ],
