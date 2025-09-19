@@ -15,6 +15,9 @@
       .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
       button { padding: 6px 10px; border-radius: 6px; border: 1px solid #9995; cursor: pointer; }
       .note { font-size: 11px; color: #666; }
+  .status { margin-top: 10px; font-size: 12px; padding: 8px; border-radius: 6px; border: 1px solid #9994; }
+  .status.success { background: #16a34a22; border-color: #16a34a55; }
+  .status.error { background: #dc262622; border-color: #dc262655; }
     </style>
   </head>
   <body>
@@ -72,6 +75,8 @@
       <button id="overrideNextDay" title="Temporarily override next-day restriction">Override next day</button>
       <button id="save">Book</button>
     </div>
+
+  <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
     <script src="popup.js" type="module"></script>
   </body>
