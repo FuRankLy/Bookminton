@@ -1,0 +1,64 @@
+# Chrome Extension Development
+
+# Packaged extension files
+*.crx
+*.pem
+*.zip
+
+# Chrome extension store assets
+store-assets/
+screenshots/
+
+# Development and build files
+node_modules/
+dist/
+build/
+.build/
+
+# Environment and configuration
+.env
+.env.local
+.env.development
+.env.production
+config/local.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Documentation build
+docs/_build/
+
+# Backup files
+*.bak
+*.backup
+
+# Chrome extension debugging
+debug.log
+extension-errors.log
