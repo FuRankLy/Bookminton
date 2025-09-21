@@ -4,6 +4,7 @@
   if (location.hostname !== 'platform.aklbadminton.com' || !location.pathname.startsWith('/booking')) return;
   const INJECT_ID = 'bookminton-page-inject';
 
+  // Inject the page-level script so it can access site JS context
   function injectScript() {
     if (document.getElementById(INJECT_ID)) return;
     const s = document.createElement('script');
@@ -18,13 +19,14 @@
     if (event.source !== window) return;
     const msg = event.data;
     if (!msg || !msg.__bm) return;
-    // Relay to background
+    // Relay to background and echo response back into the page
     chrome.runtime.sendMessage(msg.payload, (resp) => {
       // relay response back to page
       window.postMessage({ __bm_resp: true, correlationId: msg.correlationId, payload: resp }, '*');
     });
   });
 
+  // Handle messages from the extension (popup/background)
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'ping') {
       sendResponse({ pong: true, from: 'content' });
@@ -33,15 +35,6 @@
     if (msg?.type === 'override:next-day') {
       try {
         let changed = 0;
-        const el = document.querySelector('#calendar-next');
-        if (el) {
-          el.classList.remove('disabled');
-          el.removeAttribute('disabled');
-          el.setAttribute('aria-disabled', 'false');
-          el.style.pointerEvents = 'auto';
-          el.style.opacity = '';
-          changed++;
-        }
 
         // Also enable calendar day cells: <td class="disabled day">5</td> -> <td class="day">5</td>
         const cells = document.querySelectorAll('td.disabled.day');

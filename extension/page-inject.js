@@ -2,6 +2,7 @@
 (function () {
   const originTag = 'page-inject';
 
+  // Post a message outward to the content script (and then background)
   function sendToExtension(payload) {
     window.postMessage({ __bm: true, correlationId: Date.now() + ':' + Math.random(), payload }, '*');
   }
