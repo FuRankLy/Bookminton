@@ -136,3 +136,26 @@ if (dateEl && !dateEl.value) {
   dateEl.value = `${yyyy}-${mm}-${dd}`;
 }
 loadSettings();
+
+// Press-and-hold to show password
+const pwdInput = $("password");
+const showBtn = $("showPassword");
+if (pwdInput && showBtn) {
+  const show = () => { pwdInput.type = 'text'; };
+  const hide = () => { pwdInput.type = 'password'; };
+  // Mouse interactions
+  showBtn.addEventListener('mousedown', show);
+  document.addEventListener('mouseup', hide);
+  showBtn.addEventListener('mouseleave', hide);
+  // Keyboard accessibility (Space/Enter)
+  showBtn.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); show(); }
+  });
+  showBtn.addEventListener('keyup', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); hide(); }
+  });
+  // Touch support
+  showBtn.addEventListener('touchstart', (e) => { e.preventDefault(); show(); }, { passive: false });
+  showBtn.addEventListener('touchend', hide);
+  showBtn.addEventListener('touchcancel', hide);
+}
