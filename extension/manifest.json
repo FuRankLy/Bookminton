@@ -44,7 +44,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "page-inject.js"
+  "page-inject.js",
+  "pending.html",
+  "pending.js"
       ],
       "matches": [
   "https://platform.aklbadminton.com/*"

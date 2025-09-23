@@ -1,0 +1,10 @@
+<div role="dialog" aria-label="Pending bookings" style="background:var(--vscode-editor-background, #fff); color:inherit; padding:12px; border-radius:8px; width:320px; max-width:90vw; box-shadow:0 10px 25px #0004;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+    <strong>Pending bookings</strong>
+    <button id="pendingClose" aria-label="Close">✕</button>
+  </div>
+  <div style="display:flex; gap:6px; margin-bottom:6px;">
+    <button id="pendingRefresh" title="Refresh list">Refresh</button>
+  </div>
+  <div id="pendingBody" style="min-height:40px; max-height:220px; overflow:auto; font-size:12px;"></div>
+</div>

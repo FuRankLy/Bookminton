@@ -21,8 +21,13 @@
     </style>
   </head>
   <body>
-    <h1>Bookminton</h1>
+    <!-- Popup title with Pending Booking button at top-right -->
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <h1 style="margin:0;">Bookminton</h1>
+      <button id="pendingBookings" title="View or cancel pending bookings" style="font-size:12px; padding:4px 8px;">Pending Booking</button>
+    </div>
     <fieldset>
+      <!-- Login credentials used by the background booking flow -->
       <legend>Login</legend>
       <label for="email">Email</label>
       <input id="email" type="email" placeholder="name@example.com" />
@@ -31,6 +36,7 @@
     </fieldset>
 
     <fieldset>
+      <!-- Booking parameters sent to the site when "Book" is pressed -->
       <legend>Booking</legend>
       <div class="row">
         <div>
@@ -72,11 +78,18 @@
     </fieldset>
 
     <div class="buttons">
+      <!-- Attempt to enable next-day navigation on the booking page -->
       <button id="overrideNextDay" title="Temporarily override next-day restriction">Override next day</button>
+      <!-- Save settings and trigger a booking request -->
       <button id="save">Book</button>
+      <!-- Try to book; if blocked, schedule a pending job -->
+      <button id="reserve">Reserve</button>
     </div>
 
+  <!-- Area to display booking result messages -->
   <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+  <!-- Pending bookings modal is dynamically injected by pending.js -->
 
     <script src="popup.js" type="module"></script>
   </body>
