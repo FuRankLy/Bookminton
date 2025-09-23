@@ -11,6 +11,10 @@
       fieldset { border: 1px solid #8883; border-radius: 8px; padding: 8px 10px; margin: 10px 0; }
       label { display: block; margin: 6px 0 2px; font-size: 12px; }
       input, select { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; }
+  .input-eye { position: relative; }
+  .input-eye input { padding-right: 34px; }
+  .eye-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; cursor: pointer; padding: 2px; line-height: 1; font-size: 14px; opacity: .7; }
+  .eye-btn:hover { opacity: 1; }
       .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
       button { padding: 6px 10px; border-radius: 6px; border: 1px solid #9995; cursor: pointer; }
@@ -32,7 +36,10 @@
       <label for="email">Email</label>
       <input id="email" type="email" placeholder="name@example.com" />
       <label for="password">Password</label>
-      <input id="password" type="password" />
+      <div class="input-eye">
+        <input id="password" type="password" autocomplete="current-password" />
+        <button id="showPassword" type="button" class="eye-btn" aria-label="Hold to show password" title="Hold to show">👁</button>
+      </div>
     </fieldset>
 
     <fieldset>
