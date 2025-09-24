@@ -126,14 +126,6 @@ async function submitBooking(overrides) {
     return { ok: false, error: 'Missing required settings' };
   }
 
-  // Build start/end ISO strings in local time without timezone
-  const [yyyy, mm, dd] = bookingDate.split('-').map((x) => parseInt(x, 10));
-  const [hh, min] = timeStart.split(':').map((x) => parseInt(x, 10));
-  const start = new Date(yyyy, (mm - 1), dd, hh, min, 0, 0);
-  const end = new Date(start.getTime() + Number(duration) * 60_000);
-  const startIso = toLocalIsoNoTZ(start);
-  const endIso = toLocalIsoNoTZ(end);
-
   // Login
   const loginOk = await doLogin(email, password);
   if (!loginOk.ok) {
@@ -141,43 +133,10 @@ async function submitBooking(overrides) {
   }
 
   // Book
-  const facilityId = String(courtNumber); // Assumption: facility id matches court number 1–12
-  const form = new URLSearchParams();
-  form.set('payment_method', 'Account');
-  form.set('start', startIso);
-  form.set('end', endIso);
-  form.set('facility', facilityId);
-  form.set('entity_type', 'Casual');
-  form.set('entity', '');
-  form.set('requiresTerms', 'true');
-  const agreedToTerms = 'true';
-  form.set('agreedToTerms', agreedToTerms);
-  form.set('chargeConfirmed', 'false');
+  const { form, startIso, endIso, facilityId } = buildBookingForm({ bookingDate, timeStart, duration, courtNumber });
 
   const { code, respText } = await postBooking(form);
-
-  let message = `Booking HTTP status: ${code}`;
-  let terminal = false; // whether user should stop retrying
-  if (respText.includes('Sorry, this time is unavailable.')) {
-    message = 'Booking failed: Time slot already taken.';
-    terminal = true;
-  } else if (respText.includes('Members cannot book courts more than 14 days in advance.')) {
-    message = 'Booking failed: Too early to book.';
-  } else if (respText.includes('Invalid payment method - please select another.')) {
-    message = 'Booking failed: Low Balance';
-    terminal = true;
-  } else if (respText.includes('Bookings cannot exceed two hours in any 6 hour window.')) {
-    message = 'Booking failed: Exceeds 2 hours in 6 hour window.';
-    terminal = true;
-  } else if (respText.includes('"redirect"')) {
-    message = 'Booking succeeded!';
-    terminal = true;
-  } else if (code === 401) {
-    message = 'Wrong Login, please check your username and password.';
-    terminal = true;
-  } else {
-    message = `Booking response not recognized. Status ${code}`;
-  }
+  const { message, terminal } = interpretBookingResponse(code, respText);
 
   showNotification('Bookminton', message);
   return { ok: message.startsWith('Booking succeeded'), code, message, startIso, endIso, facilityId, terminal, body: respText };
@@ -289,6 +248,57 @@ function interpretBookingResponse(code, respText) {
   return { message, terminal };
 }
 
+// Compute free courts for a given time window from bookings
+function computeFreeCourts(data, timeStart, duration, preferredCourtNumber) {
+  if (!data || !Array.isArray(data.bookings) || !timeStart || !duration) return data;
+  const parseHM = (hm) => {
+    const [h,m] = String(hm).split(':').map(x=>parseInt(x,10));
+    return h*60 + m;
+  };
+  const overlaps = (a,b) => a[0] < b[1] && b[0] < a[1];
+  const startMin = parseHM(timeStart);
+  const endMin = startMin + Number(duration);
+  let courtsCount = 0;
+  const occupied = new Map();
+  data.bookings.forEach(b => {
+    const ci = typeof b.courtIndex === 'number' ? b.courtIndex : null;
+    if (ci == null) return;
+    const st = b.start ? parseHM(b.start) : null;
+    const en = b.end ? parseHM(b.end) : null;
+    if (st == null || en == null) return;
+    if (!occupied.has(ci)) occupied.set(ci, []);
+    occupied.get(ci).push([st, en]);
+    courtsCount = Math.max(courtsCount, ci + 1);
+  });
+  if (!courtsCount) {
+    if (Array.isArray(data.courts)) courtsCount = data.courts.length;
+    else if (Array.isArray(data.facilities)) courtsCount = data.facilities.length;
+    else courtsCount = Math.max(occupied.size, 12);
+  }
+  const windowRange = [startMin, endMin];
+  const free = [];
+  for (let i = 0; i < courtsCount; i++) {
+    const ranges = occupied.get(i) || [];
+    const hasConflict = ranges.some(r => overlaps(r, windowRange));
+    if (!hasConflict) free.push(i);
+  }
+  const courtName = (idx) => {
+    if (Array.isArray(data.courts) && data.courts[idx]?.name) return data.courts[idx].name;
+    if (Array.isArray(data.facilities) && data.facilities[idx]?.name) return data.facilities[idx].name;
+    return String(idx + 1);
+  };
+  data.freeCourtIndices = free;
+  data.freeCourtNames = free.map(courtName);
+  data.window = { start: timeStart, end: `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}` };
+  data.isAnyCourtFree = free.length > 0;
+  if (preferredCourtNumber && Number.isFinite(preferredCourtNumber)) {
+    const idx = preferredCourtNumber - 1;
+    data.isDesiredCourtFree = free.includes(idx);
+    data.desiredCourt = { number: preferredCourtNumber, name: courtName(idx) };
+  }
+  return data;
+}
+
 /** Pending jobs storage helpers */
 async function getPendingJobs() {
   const data = await chrome.storage.local.get({ [PENDING_JOBS_KEY]: [] });
@@ -336,19 +346,46 @@ function scheduleMidnightAlarms(jobId) {
   chrome.alarms.create(alarmNameMidnightBook(jobId), { when: midnight.getTime() });
 }
 
-/** Schedule retry alarm for a cancellation job (every ~1 minute; 10s not supported by alarms). */
+/** Schedule an ongoing retry alarm for a cancellation job (every 1 minute). */
 function scheduleRetryAlarm(jobId) {
-  chrome.alarms.create(alarmNameRetry(jobId), { periodInMinutes: 1, when: Date.now() + 1000 });
+  const name = alarmNameRetry(jobId);
+  // Clear any existing alarm with the same name to avoid duplicates, then schedule periodic
+  chrome.alarms.clear(name, () => {
+    chrome.alarms.create(name, { delayInMinutes: 1, periodInMinutes: 1 });
+  });
+}
+
+/** Ensure periodic alarms exist for all active cancellation jobs (idempotent). */
+async function ensureCancellationAlarms() {
+  try {
+    const jobs = await getPendingJobs();
+    const cancels = jobs.filter(j => j.status !== 'cancelled' && j.type === 'cancellation');
+    // Fetch existing alarms once to minimize API calls
+    const existing = await new Promise((resolve) => chrome.alarms.getAll(resolve));
+    const existingNames = new Set((existing || []).map(a => a.name));
+    for (const j of cancels) {
+      const name = alarmNameRetry(j.id);
+      if (!existingNames.has(name)) {
+        scheduleRetryAlarm(j.id);
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Preload settings when the extension is installed/updated
   await loadSettings();
+  // Re-establish periodic alarms for active cancellation jobs
+  await ensureCancellationAlarms();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   // Reload settings on browser startup
   await loadSettings();
+  // Re-establish periodic alarms for active cancellation jobs
+  await ensureCancellationAlarms();
 });
 
 // Central message router for popup/content/page communications
@@ -516,51 +553,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           // Optionally compute free courts for a given time window
           if (data?.ok && Array.isArray(data.bookings) && timeStart && duration) {
-            const parseHM = (hm) => {
-              const [h,m] = String(hm).split(':').map(x=>parseInt(x,10));
-              return h*60 + m;
-            };
-            const overlaps = (a,b) => a[0] < b[1] && b[0] < a[1];
-            const startMin = parseHM(timeStart);
-            const endMin = startMin + duration;
-            let courtsCount = 0;
-            const occupied = new Map();
-            data.bookings.forEach(b => {
-              const ci = typeof b.courtIndex === 'number' ? b.courtIndex : null;
-              if (ci == null) return;
-              const st = b.start ? parseHM(b.start) : null;
-              const en = b.end ? parseHM(b.end) : null;
-              if (st == null || en == null) return;
-              if (!occupied.has(ci)) occupied.set(ci, []);
-              occupied.get(ci).push([st, en]);
-              courtsCount = Math.max(courtsCount, ci + 1);
-            });
-            if (!courtsCount) {
-              if (Array.isArray(data.courts)) courtsCount = data.courts.length;
-              else if (Array.isArray(data.facilities)) courtsCount = data.facilities.length;
-              else courtsCount = Math.max(occupied.size, 12);
-            }
-            const windowRange = [startMin, endMin];
-            const free = [];
-            for (let i = 0; i < courtsCount; i++) {
-              const ranges = occupied.get(i) || [];
-              const hasConflict = ranges.some(r => overlaps(r, windowRange));
-              if (!hasConflict) free.push(i);
-            }
-            const courtName = (idx) => {
-              if (Array.isArray(data.courts) && data.courts[idx]?.name) return data.courts[idx].name;
-              if (Array.isArray(data.facilities) && data.facilities[idx]?.name) return data.facilities[idx].name;
-              return String(idx + 1);
-            };
-            data.freeCourtIndices = free;
-            data.freeCourtNames = free.map(courtName);
-            data.window = { start: timeStart, end: `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}` };
-            data.isAnyCourtFree = free.length > 0;
-            if (preferredCourt && Number.isFinite(preferredCourt)) {
-              const idx = preferredCourt - 1;
-              data.isDesiredCourtFree = free.includes(idx);
-              data.desiredCourt = { number: preferredCourt, name: courtName(idx) };
-            }
+            computeFreeCourts(data, timeStart, duration, preferredCourt);
           }
           if (data?.ok && dateStr) {
             await saveAvailability(dateStr, data);
@@ -630,16 +623,50 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       const jobs = await getPendingJobs();
       const job = jobs.find(j => j.id === id);
       if (!job) return;
-      const { form } = buildBookingForm(job.booking);
-      const { code, respText } = await postBooking(form);
-      const { message } = interpretBookingResponse(code, respText);
-      if (message.startsWith('Booking succeeded')) {
-        showNotification('Bookminton', 'Cancellation booking succeeded');
-        chrome.alarms.clear(alarmNameRetry(id));
-        await removePendingJob(id);
-      } else {
-        // Keep retrying; notify occasionally (suppress noisy spam)
-        // No action needed; alarm is periodic
+      // Update last check timestamp and attempt counter for visibility in UI
+      try {
+        const nextAttempt = (job.attemptCount || 0) + 1;
+        await updatePendingJob(id, { lastCheckAt: Date.now(), attemptCount: nextAttempt });
+      } catch(_) {}
+      try {
+        // Ensure login before checking availability
+        const email = currentSettings?.email;
+        const password = currentSettings?.password;
+        if (email && password) await doLogin(email, password);
+
+        const { bookingDate, timeStart, duration } = job.booking || {};
+        if (!bookingDate || !timeStart || !duration) { scheduleRetryAlarm(id); return; }
+
+        // Prefer feed-based collection; fall back to DOM collector
+        let data = await collectAvailabilityViaFeed(bookingDate).catch(() => null);
+        if (!data || !Array.isArray(data.bookings)) {
+          data = await collectAvailabilityForDate(bookingDate).catch(() => null);
+        }
+  if (!data?.ok) { return; }
+
+        // Compute free courts for the desired window
+        computeFreeCourts(data, timeStart, Number(duration));
+        const free = Array.isArray(data.freeCourtIndices) ? data.freeCourtIndices : [];
+  if (free.length === 0) { return; }
+
+        // Pick a random free court and attempt booking immediately
+        const pick = free[Math.floor(Math.random() * free.length)];
+        const attempt = { bookingDate, timeStart, duration, courtNumber: String(pick + 1) };
+        const { form } = buildBookingForm(attempt);
+        const { code, respText } = await postBooking(form);
+        const { message } = interpretBookingResponse(code, respText);
+        if (message.startsWith('Booking succeeded')) {
+          const courtName = (Array.isArray(data.courts) && data.courts[pick]?.name)
+            ? data.courts[pick].name
+            : `Court ${pick + 1}`;
+          showNotification('Bookminton', `Cancellation booking succeeded on ${courtName}`);
+          chrome.alarms.clear(alarmNameRetry(id));
+          await removePendingJob(id);
+        } else {
+          // Not successful yet; wait for next periodic tick
+        }
+      } catch (_) {
+        // On any error, wait for next periodic tick
       }
     }
   } catch (e) {

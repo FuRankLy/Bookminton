@@ -76,9 +76,11 @@ export function createPendingUI() {
       row.style.gap = '8px';
       row.style.padding = '6px 0';
 
-      const label = document.createElement('div');
-      const typeLabel = it.type === 'midnight' ? 'Midnight' : 'Cancellation';
-      label.textContent = `${typeLabel} — ${it.booking.bookingDate} ${it.booking.timeStart} (Court ${it.booking.courtNumber})`;
+  const label = document.createElement('div');
+  const typeLabel = it.type === 'midnight' ? 'Midnight' : 'Cancellation';
+  const attempts = it.attemptCount ? ` • tries: ${it.attemptCount}` : '';
+  const last = it.lastCheckAt ? ` • last: ${new Date(it.lastCheckAt).toLocaleTimeString()}` : '';
+  label.textContent = `${typeLabel} — ${it.booking.bookingDate} ${it.booking.timeStart} (Court ${it.booking.courtNumber})${attempts}${last}`;
 
       const actions = document.createElement('div');
       actions.style.display = 'flex';
