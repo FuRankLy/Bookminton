@@ -1,8 +1,86 @@
 // Service worker: alarms, message routing, notifications
+import { collectAvailabilityForDate } from './availability.js';
 
 const SETTINGS_KEY = 'bookminton:settings';
 let currentSettings = null;
 const PENDING_JOBS_KEY = 'bookminton:pendingJobs';
+const AVAIL_KEY = 'bookminton:availability';
+
+// --- Availability via API feed (preferred) ---
+async function fetchBookingFeed(startDate, endDate) {
+  const ts = Date.now();
+  const url = `https://platform.aklbadminton.com/api/booking/feed?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}&_=${ts}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    credentials: 'include',
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
+  try { return await res.json(); } catch { return JSON.parse(await res.text()); }
+}
+
+function addDays(isoYmd, days) {
+  const [y,m,d] = isoYmd.split('-').map(n=>parseInt(n,10));
+  const dt = new Date(y, m-1, d);
+  dt.setDate(dt.getDate() + days);
+  const pad = (n)=>String(n).padStart(2,'0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+}
+
+function isoToHM(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n)=>String(n).padStart(2,'0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function normalizeFeedToBookings(feed) {
+  const items = Array.isArray(feed) ? feed : (Array.isArray(feed?.events) ? feed.events : (Array.isArray(feed?.data) ? feed.data : []));
+  const bookings = [];
+  const namesByIdx = new Map();
+  const guessCourtIndex = (evt) => {
+    const candidates = [evt.court, evt.courtId, evt.court_id, evt.facility, evt.facilityId, evt.facility_id, evt.resourceId, evt.resource_id, evt.resource?.id];
+    for (const c of candidates) {
+      const num = typeof c === 'string' ? parseInt(c,10) : (typeof c === 'number' ? c : NaN);
+      if (!Number.isNaN(num) && num >= 1 && num <= 64) return num - 1;
+    }
+    const name = evt.facility_name || evt.facilityName || evt.facility?.name || evt.resource?.title || evt.resource?.name || evt.title;
+    if (name && typeof name === 'string') {
+      const m = name.match(/court\s*(\d{1,2})/i) || name.match(/\b(\d{1,2})\b/);
+      if (m) { const num = parseInt(m[1],10); if (!Number.isNaN(num)) return num - 1; }
+    }
+    return null;
+  };
+  for (const evt of items) {
+    const startIso = evt.start || evt.start_time || evt.startTime || evt.begin;
+    const endIso = evt.end || evt.end_time || evt.endTime || evt.finish;
+    const start = isoToHM(startIso);
+    const end = isoToHM(endIso);
+    const idx = guessCourtIndex(evt);
+    if (start && end && idx != null) {
+      const title = evt.title || evt.name || evt.facility_name || null;
+      bookings.push({ courtIndex: idx, start, end, title });
+      const courtName = evt.facility_name || evt.facility?.name || evt.resource?.title || null;
+      if (courtName && !namesByIdx.has(idx)) namesByIdx.set(idx, courtName);
+    }
+  }
+  const courts = [];
+  if (namesByIdx.size) {
+    const maxIdx = Math.max(...Array.from(namesByIdx.keys()));
+    for (let i=0; i<=maxIdx; i++) courts.push({ index: i, name: namesByIdx.get(i) || null });
+  }
+  return { bookings, courts };
+}
+
+async function collectAvailabilityViaFeed(dateStr) {
+  const start = dateStr;
+  const end = addDays(dateStr, 1);
+  const feed = await fetchBookingFeed(start, end);
+  const norm = normalizeFeedToBookings(feed);
+  return { ok: true, date: dateStr, via: 'feed', facilities: [], courts: norm.courts || [], bookings: norm.bookings || [] };
+}
 
 /**
  * Load user settings from chrome.storage.sync into the in-memory cache.
@@ -374,14 +452,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 const [result] = await chrome.scripting.executeScript({
                   target: { tabId: tab.id },
                   func: () => {
-                    const el = document.querySelector('#calendar-next');
-                    if (!el) return { ok: false, error: '#calendar-next not found' };
-                    el.classList.remove('disabled');
-                    el.removeAttribute('disabled');
-                    el.setAttribute('aria-disabled', 'false');
-                    el.style.pointerEvents = 'auto';
-                    el.style.opacity = '';
-                    return { ok: true };
+                    const clean = (el) => {
+                      if (!el) return false;
+                      let c = 0;
+                      const classes = ['disabled','fc-state-disabled','fc-button-disabled'];
+                      classes.forEach(cls => { if (el.classList?.contains(cls)) { el.classList.remove(cls); c++; } });
+                      if (el.hasAttribute?.('disabled')) { el.removeAttribute('disabled'); c++; }
+                      if (el.hasAttribute?.('aria-disabled')) { el.setAttribute('aria-disabled','false'); c++; }
+                      try { el.disabled = false; } catch {}
+                      if (el.style) { el.style.pointerEvents = 'auto'; el.style.opacity = ''; }
+                      return c > 0;
+                    };
+                    const nextCandidates = [
+                      document.getElementById('calendar-next'),
+                      ...document.querySelectorAll('.fc-next-button, button.fc-next-button, .fc-toolbar button[aria-label="next"]')
+                    ];
+                    let enabledNext = 0;
+                    nextCandidates.forEach(btn => { if (btn && clean(btn)) enabledNext++; });
+                    // Enable disabled day cells too
+                    let enabledCells = 0;
+                    const cells = document.querySelectorAll('td.disabled, td.disabled.day, .fc-day.disabled, .fc-daygrid-day.disabled');
+                    cells.forEach((cell) => {
+                      let changedCell = clean(cell);
+                      try { if (!cell.classList.contains('day')) { cell.classList.add('day'); changedCell = true; } } catch {}
+                      const nested = cell.querySelectorAll('button, a');
+                      nested.forEach((el) => { if (clean(el)) changedCell = true; });
+                      if (changedCell) enabledCells++;
+                    });
+                    return (enabledNext || enabledCells)
+                      ? { ok: true, enabledNext, enabledCells }
+                      : { ok: false, error: 'No targets found' };
                   },
                 });
                 sendResponse(result?.result || { ok: false, error: 'No result' });
@@ -397,6 +497,97 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       });
       return true; // async response
+    }
+    case 'availability:collect': {
+      (async () => {
+        try {
+          await loadSettings();
+          const { email, password } = currentSettings || {};
+          const loginRes = await doLogin(email, password);
+          if (!loginRes.ok) { sendResponse(loginRes); return; }
+          const dateStr = msg.date;
+          const timeStart = msg.timeStart;
+          const duration = Number(msg.duration);
+          const preferredCourt = msg.courtNumber ? Number(msg.courtNumber) : (currentSettings?.courtNumber ? Number(currentSettings.courtNumber) : null);
+          // Prefer API feed to avoid opening/refreshing tabs
+          let data = await collectAvailabilityViaFeed(dateStr).catch(() => null);
+          if (!data || !Array.isArray(data.bookings)) {
+            data = await collectAvailabilityForDate(dateStr);
+          }
+          // Optionally compute free courts for a given time window
+          if (data?.ok && Array.isArray(data.bookings) && timeStart && duration) {
+            const parseHM = (hm) => {
+              const [h,m] = String(hm).split(':').map(x=>parseInt(x,10));
+              return h*60 + m;
+            };
+            const overlaps = (a,b) => a[0] < b[1] && b[0] < a[1];
+            const startMin = parseHM(timeStart);
+            const endMin = startMin + duration;
+            let courtsCount = 0;
+            const occupied = new Map();
+            data.bookings.forEach(b => {
+              const ci = typeof b.courtIndex === 'number' ? b.courtIndex : null;
+              if (ci == null) return;
+              const st = b.start ? parseHM(b.start) : null;
+              const en = b.end ? parseHM(b.end) : null;
+              if (st == null || en == null) return;
+              if (!occupied.has(ci)) occupied.set(ci, []);
+              occupied.get(ci).push([st, en]);
+              courtsCount = Math.max(courtsCount, ci + 1);
+            });
+            if (!courtsCount) {
+              if (Array.isArray(data.courts)) courtsCount = data.courts.length;
+              else if (Array.isArray(data.facilities)) courtsCount = data.facilities.length;
+              else courtsCount = Math.max(occupied.size, 12);
+            }
+            const windowRange = [startMin, endMin];
+            const free = [];
+            for (let i = 0; i < courtsCount; i++) {
+              const ranges = occupied.get(i) || [];
+              const hasConflict = ranges.some(r => overlaps(r, windowRange));
+              if (!hasConflict) free.push(i);
+            }
+            const courtName = (idx) => {
+              if (Array.isArray(data.courts) && data.courts[idx]?.name) return data.courts[idx].name;
+              if (Array.isArray(data.facilities) && data.facilities[idx]?.name) return data.facilities[idx].name;
+              return String(idx + 1);
+            };
+            data.freeCourtIndices = free;
+            data.freeCourtNames = free.map(courtName);
+            data.window = { start: timeStart, end: `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}` };
+            data.isAnyCourtFree = free.length > 0;
+            if (preferredCourt && Number.isFinite(preferredCourt)) {
+              const idx = preferredCourt - 1;
+              data.isDesiredCourtFree = free.includes(idx);
+              data.desiredCourt = { number: preferredCourt, name: courtName(idx) };
+            }
+          }
+          if (data?.ok && dateStr) {
+            await saveAvailability(dateStr, data);
+          }
+          sendResponse(data);
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e) });
+        }
+      })();
+      return true;
+    }
+    case 'availability:get': {
+      (async () => {
+        try {
+          const dateStr = msg.date;
+          if (dateStr) {
+            const item = await getAvailability(dateStr);
+            sendResponse({ ok: true, date: dateStr, data: item || null });
+          } else {
+            const all = await chrome.storage.local.get({ [AVAIL_KEY]: {} });
+            sendResponse({ ok: true, all: all[AVAIL_KEY] || {} });
+          }
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e) });
+        }
+      })();
+      return true;
     }
     default:
       // no-op
@@ -468,4 +659,16 @@ function showNotification(title, message) {
     message,
     priority: 0,
   });
+}
+
+// Availability storage helpers
+async function saveAvailability(dateStr, dataset) {
+  const data = await chrome.storage.local.get({ [AVAIL_KEY]: {} });
+  const map = data[AVAIL_KEY] || {};
+  map[dateStr] = dataset;
+  await chrome.storage.local.set({ [AVAIL_KEY]: map });
+}
+async function getAvailability(dateStr) {
+  const data = await chrome.storage.local.get({ [AVAIL_KEY]: {} });
+  return (data[AVAIL_KEY] || {})[dateStr];
 }
