@@ -333,11 +333,11 @@ function alarmNameMidnightLogin(id) { return `bookminton:midnight:login:${id}`; 
 function alarmNameMidnightBook(id) { return `bookminton:midnight:book:${id}`; }
 function alarmNameRetry(id) { return `bookminton:retry:${id}`; }
 
-/** Schedule alarms for a midnight job (login at 23:59:40, book at 00:00:00). */
+/** Schedule alarms for a midnight job (login at 23:59:45, book at 00:00:00). */
 function scheduleMidnightAlarms(jobId) {
   const now = new Date();
   const loginAt = new Date();
-  loginAt.setHours(23, 59, 40, 0);
+  loginAt.setHours(23, 59, 45, 0); // 15 seconds before midnight
   const midnight = new Date(now);
   midnight.setDate(now.getDate() + 1);
   midnight.setHours(0, 0, 0, 0);
@@ -346,12 +346,11 @@ function scheduleMidnightAlarms(jobId) {
   chrome.alarms.create(alarmNameMidnightBook(jobId), { when: midnight.getTime() });
 }
 
-/** Schedule an ongoing retry alarm for a cancellation job (every 1 minute). */
-function scheduleRetryAlarm(jobId) {
+/** Schedule the next retry alarm for a cancellation job (~every 10 seconds, one-off reschedule). */
+function scheduleRetryAlarm(jobId, delayMs = 10_000) {
   const name = alarmNameRetry(jobId);
-  // Clear any existing alarm with the same name to avoid duplicates, then schedule periodic
   chrome.alarms.clear(name, () => {
-    chrome.alarms.create(name, { delayInMinutes: 1, periodInMinutes: 1 });
+    chrome.alarms.create(name, { when: Date.now() + Math.max(1000, delayMs) });
   });
 }
 
@@ -366,7 +365,7 @@ async function ensureCancellationAlarms() {
     for (const j of cancels) {
       const name = alarmNameRetry(j.id);
       if (!existingNames.has(name)) {
-        scheduleRetryAlarm(j.id);
+  scheduleRetryAlarm(j.id, 10_000);
       }
     }
   } catch (_) {
@@ -442,7 +441,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Pending Booking (Cancellation)
             const job = { ...jobBase, type: 'cancellation' };
             await addPendingJob(job);
-            scheduleRetryAlarm(job.id);
+      scheduleRetryAlarm(job.id, 10_000);
             scheduled = { type: 'cancellation', id: job.id };
             showNotification('Bookminton', 'Pending Booking scheduled: will retry periodically.');
           }
@@ -601,7 +600,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       const password = currentSettings?.password;
       if (email && password) await doLogin(email, password);
     } else if (name.startsWith('bookminton:midnight:book:')) {
-      const id = name.split(':').pop();
+      const prefix = 'bookminton:midnight:book:';
+      const id = name.slice(prefix.length);
       const jobs = await getPendingJobs();
       const job = jobs.find(j => j.id === id);
       if (!job) return;
@@ -618,8 +618,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         showNotification('Bookminton', `Midnight booking attempt: ${message}`);
         // Keep job for manual management
       }
-    } else if (name.startsWith('bookminton:retry:')) {
-      const id = name.split(':').pop();
+  } else if (name.startsWith('bookminton:retry:')) {
+      const prefix = 'bookminton:retry:';
+      const id = name.slice(prefix.length);
       const jobs = await getPendingJobs();
       const job = jobs.find(j => j.id === id);
       if (!job) return;
@@ -629,44 +630,29 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         await updatePendingJob(id, { lastCheckAt: Date.now(), attemptCount: nextAttempt });
       } catch(_) {}
       try {
-        // Ensure login before checking availability
+        // Ensure login before retrying booking
         const email = currentSettings?.email;
         const password = currentSettings?.password;
         if (email && password) await doLogin(email, password);
 
-        const { bookingDate, timeStart, duration } = job.booking || {};
-        if (!bookingDate || !timeStart || !duration) { scheduleRetryAlarm(id); return; }
+        const { bookingDate, timeStart, duration, courtNumber } = job.booking || {};
+        if (!bookingDate || !timeStart || !duration || !courtNumber) { scheduleRetryAlarm(id, 10_000); return; }
 
-        // Prefer feed-based collection; fall back to DOM collector
-        let data = await collectAvailabilityViaFeed(bookingDate).catch(() => null);
-        if (!data || !Array.isArray(data.bookings)) {
-          data = await collectAvailabilityForDate(bookingDate).catch(() => null);
-        }
-  if (!data?.ok) { return; }
-
-        // Compute free courts for the desired window
-        computeFreeCourts(data, timeStart, Number(duration));
-        const free = Array.isArray(data.freeCourtIndices) ? data.freeCourtIndices : [];
-  if (free.length === 0) { return; }
-
-        // Pick a random free court and attempt booking immediately
-        const pick = free[Math.floor(Math.random() * free.length)];
-        const attempt = { bookingDate, timeStart, duration, courtNumber: String(pick + 1) };
-        const { form } = buildBookingForm(attempt);
+        // Build the same booking request and attempt it
+        const { form } = buildBookingForm({ bookingDate, timeStart, duration, courtNumber });
         const { code, respText } = await postBooking(form);
         const { message } = interpretBookingResponse(code, respText);
         if (message.startsWith('Booking succeeded')) {
-          const courtName = (Array.isArray(data.courts) && data.courts[pick]?.name)
-            ? data.courts[pick].name
-            : `Court ${pick + 1}`;
-          showNotification('Bookminton', `Cancellation booking succeeded on ${courtName}`);
+          showNotification('Bookminton', 'Cancellation booking succeeded');
           chrome.alarms.clear(alarmNameRetry(id));
           await removePendingJob(id);
         } else {
-          // Not successful yet; wait for next periodic tick
+          // Not successful yet; schedule another check in ~10s
+          scheduleRetryAlarm(id, 10_000);
         }
       } catch (_) {
-        // On any error, wait for next periodic tick
+        // On any error, try again shortly
+        scheduleRetryAlarm(id, 10_000);
       }
     }
   } catch (e) {

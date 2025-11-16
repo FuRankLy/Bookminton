@@ -113,8 +113,6 @@ if (reserveBtn) {
   });
 }
 
-// (Check availability button removed)
-
 // Pending modal
 const pendingBtn = $("pendingBookings");
 const pendingUI = createPendingUI();
